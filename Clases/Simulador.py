@@ -3,6 +3,8 @@ import random
 from Persona import Persona
 from Comida import Comida
 from Agua import Agua
+from Cultivo import Cultivo
+from Casa import Casa 
 
 class Simulador:
     """Clase principal que maneja la simulación"""
@@ -23,7 +25,8 @@ class Simulador:
         self.personas: list[Persona] = []
         self.comida: list[Comida] = []
         self.agua: list[Agua] = []
-        
+        self.cultivos: list[Cultivo] = []
+        self.casas: list[Casa] = []
         # Contador de ciclos
         self.ciclo = 0
         self.año = 0
@@ -54,6 +57,7 @@ class Simulador:
         """Actualiza el estado de la simulación"""
         self.ciclo += 1
         self.año = self.ciclo / 142.85
+        
         # 1. Actualizar necesidades de personas vivas
         for persona in self.personas:
             if persona.vivo:
@@ -99,12 +103,19 @@ class Simulador:
                 self._mover_hacia_objetivo(persona)
         
         # Generar comida aleatoriamente
-        self.generador_comida += 1.5
-        if self.generador_comida >= 100:
-            nueva_comida = Comida.generar_aleatorio(self.ancho, self.alto)
-            self.comida.append(nueva_comida)
-            self.generador_comida = 0
-        
+        if len(self.cultivos) == 0:
+            self.generador_comida += 1.5
+            if self.generador_comida >= 100:
+                nueva_comida = Comida.generar_aleatorio(self.ancho, self.alto)
+                self.comida.append(nueva_comida)
+                self.generador_comida = 0
+        else:
+            self.generador_comida += 0.5
+            if self.generador_comida >= 100:
+                nueva_comida = Comida.generar_aleatorio(self.ancho, self.alto)
+                self.comida.append(nueva_comida)
+                self.generador_comida = 0
+
         # Generar agua en conjuntos
         self.generador_agua += 1
         if self.generador_agua >= 100:
@@ -121,16 +132,6 @@ class Simulador:
                     self.comida.remove(comida)
                     persona.objetivo = None
         
-        # Interacciones: personas beben agua cercana
-        for persona in self.personas:
-            if not persona.vivo:
-                continue
-            for fuente in self.agua[:]:
-                if fuente.es_bebida_por(persona):
-                    if fuente.agotada:
-                        self.agua.remove(fuente)
-                    persona.objetivo = None
-        
         # Interacciones: personas socializan
         self._procesar_socializacion()
         
@@ -139,15 +140,124 @@ class Simulador:
         
         # Reproducción
         self._procesar_reproduccion()
+
+        # Interacciones: personas beben o recogen agua
+        for persona in self.personas:
+            if not persona.vivo: continue
+            
+            for fuente in self.agua[:]:
+                if persona.distancia_a(fuente.x, fuente.y) < 15:
+                    accion = persona.decidir_accion()
+                    
+                    # 1. Si viene a recoger agua para su huerto
+                    if accion == 'buscar_agua_cultivo':
+                        persona.agua_inventario = 3  # Coge 3 de agua de golpe para no hacer tantos viajes
+                        fuente.cantidad -= 10
+                        persona.objetivo = None
+                        
+                        if fuente.cantidad <= 0:
+                            fuente.agotada = True
+                            if fuente in self.agua:
+                                self.agua.remove(fuente)
+                    
+                    # 2. Si viene a beber porque tiene sed
+                    else:
+                        if fuente.es_bebida_por(persona):
+                            if fuente.agotada and fuente in self.agua:
+                                self.agua.remove(fuente)
+                            persona.objetivo = None
+        # Interacciones: Regar cultivos
+        for persona in self.personas:
+            if not persona.vivo: continue
+            
+            # Si tiene agua guardada, busca si está cerca de su cultivo para regarlo
+            if persona.agua_inventario > 0:
+                for cultivo in persona.cultivos:
+                    if persona.distancia_a(cultivo.x, cultivo.y) < 15 and cultivo.agua_almacenada < 3:
+                        cultivo.agua_almacenada += persona.agua_inventario
+                        persona.agua_inventario = 0
+                        persona.objetivo = None
+                        break
         
         # Limpiar comida y agua consumidas
         self.comida = [c for c in self.comida if not c.consumida]
         self.agua = [a for a in self.agua if not a.agotada]
+        self.cultivos = [c for c in self.cultivos if c.dueño is not None]
+
+        # --- PROCESAR CULTIVOS Y AGRICULTURA ---
+        for persona in self.personas:
+            if not persona.vivo: continue
+            accion = persona.decidir_accion()
+            
+            # Plantar cultivo
+            if accion == 'crear_cultivo':
+                if len(persona.cultivos) < 2:
+                    nuevo_cultivo = Cultivo(persona.x, persona.y, persona)
+                    persona.cultivos.append(nuevo_cultivo)
+                    self.cultivos.append(nuevo_cultivo)
+                    persona.comida_almacenada -= 1
+                    persona.objetivo = None
+                    print(f"🌱 {persona.nombre} ha creado un cultivo. (Total: {len(persona.cultivos)})")
+            else:
+                persona.objetivo = None # Cancela si por algún motivo ya tiene 2
+            
+            # 🏠 Construir casa
+            if accion == 'crear_casa':
+                nueva_casa = Casa(persona.x, persona.y, persona)
+                persona.casa = nueva_casa
+                self.casas.append(nueva_casa)
+                persona.comida_almacenada -= 1  # Gasta una unidad de comida como recurso
+                persona.objetivo = None
+                print(f"🏠 {persona.nombre} ha construido una hermosa casa.")
+
+        # Los cultivos crecen y tiran comida
+        for cultivo in self.cultivos:
+            comida_nueva = cultivo.procesar()
+            if comida_nueva:
+                self.comida.extend(comida_nueva)
         
-        # Eliminar personas muertas
+        # Eliminar personas muertas y procesar HERENCIA
         for p in self.personas:
-            if p.vivo == False:
+            if not p.vivo:
                 print(f"💀 {p.nombre} ha muerto a los {p.edad:.2f} años en el año: {self.año:.2f}")
+                
+                # Sistema de Herencia
+                heredero = None
+                if p.pareja and p.pareja.vivo:
+                    heredero = p.pareja
+                else:
+                    hijos_vivos = [h for h in p.hijos if h.vivo]
+                    if hijos_vivos:
+                        heredero = random.choice(hijos_vivos)
+                
+                for cultivo in p.cultivos:
+                    if heredero:
+                        cultivo.dueño = heredero
+                        heredero.cultivos.append(cultivo)
+                    else:
+                        cultivo.dueño = None # El cultivo queda abandonado si no hay herederos
+                
+                # Sistema de Herencia de Cultivos
+                for cultivo in p.cultivos:
+                    if heredero and len(heredero.cultivos) < 2:
+                        cultivo.dueño = heredero
+                        heredero.cultivos.append(cultivo)
+                        print(f"🌱 El cultivo de {p.nombre} ha sido heredado por {heredero.nombre}.")
+                    else:
+                        cultivo.dueño = None # El cultivo queda abandonado si el heredero ya tiene 2 o no hay heredero
+                        print(f"🍂 Un cultivo de {p.nombre} ha quedado abandonado por exceso de límite o falta de herederos.")
+                
+                # 🏠 Sistema de Herencia para Casas
+                if p.casa:
+                    if heredero and not heredero.casa:
+                        p.casa.dueño = heredero
+                        heredero.casa = p.casa
+                        print(f"🏠 La casa de {p.nombre} ha sido heredada por {heredero.nombre}.")
+                    else:
+                        p.casa.dueño = None
+                        if p.casa in self.casas:
+                            self.casas.remove(p.casa) # Se limpia si no hay nadie sin techo que la reclame
+
         self.personas = [p for p in self.personas if p.vivo]
     
     def _asignar_objetivo(self, persona: Persona):
@@ -158,25 +268,24 @@ class Simulador:
         
         accion = persona.decidir_accion()
         
-        if accion == 'comer_almacenado':
-            # No necesita objetivo, lo hace directamente
+        if accion in ['comer_almacenado', 'crear_cultivo']:
             persona.objetivo = None
         elif accion == 'buscar_pareja':
-            objetivo = self._encontrar_pareja_potencial(persona)
-            if objetivo:
-                persona.objetivo = objetivo
+            persona.objetivo = self._encontrar_pareja_potencial(persona)
         elif accion == 'buscar_comida':
-            objetivo = self._encontrar_comida_cercana(persona)
-            if objetivo:
-                persona.objetivo = objetivo
-        elif accion == 'buscar_agua':
-            objetivo = self._encontrar_agua_cercana(persona)
-            if objetivo:
-                persona.objetivo = objetivo
+            persona.objetivo = self._encontrar_comida_cercana(persona)
+        elif accion in ['buscar_agua', 'buscar_agua_cultivo']:
+            persona.objetivo = self._encontrar_agua_cercana(persona)
         elif accion == 'socializar':
-            objetivo = self._encontrar_persona_cercana(persona)
-            if objetivo:
-                persona.objetivo = objetivo
+            persona.objetivo = self._encontrar_persona_cercana(persona)
+        elif accion == 'regar_cultivo':
+            # Buscar el cultivo que necesita agua
+            cultivos_necesitados = [c for c in persona.cultivos if c.agua_almacenada < 3]
+            if cultivos_necesitados:
+                persona.objetivo = cultivos_necesitados[0]
+        elif accion == 'ir_a_casa':
+            # 🏠 Destino: Casa propia
+            persona.objetivo = persona.casa
     
     def _encontrar_comida_cercana(self, persona: Persona) -> Comida:
         """Encuentra la comida más cercana a una persona"""
@@ -315,7 +424,7 @@ class Simulador:
             # Si están juntos y pueden tener hijos
             if distancia < RANGO_REPRODUCCION and persona.puede_tener_hijos() and pareja.puede_tener_hijos():
                 # Probabilidad de reproducción (1 en 500 ciclos aproximadamente)
-                if random.random() < 0.002:
+                if random.random() < 0.01:
                     # Solo el que tiene "sexo femenino" da a luz
                     if hasattr(persona, 'sexo') and persona.sexo == 'femenino':
                         hijo = persona.reproducirse_con(pareja)
@@ -339,7 +448,29 @@ class Simulador:
         for comida in self.comida:
             pygame.draw.circle(self.pantalla, (255, 165, 0), (int(comida.x), int(comida.y)), 6)
             pygame.draw.circle(self.pantalla, (255, 200, 0), (int(comida.x), int(comida.y)), 6, 1)
-        
+        # Dibujar cultivos (antes de dibujar personas)
+        for cultivo in self.cultivos:
+            color_cultivo = (139, 69, 19) # Marrón tierra
+            pygame.draw.rect(self.pantalla, color_cultivo, (int(cultivo.x) - 10, int(cultivo.y) - 10, 20, 20))
+            # Indicador visual si tiene agua
+            if cultivo.agua_almacenada > 0:
+                pygame.draw.circle(self.pantalla, (0, 200, 255), (int(cultivo.x), int(cultivo.y)), 4)
+
+        # 🏠 Dibujar Casas (antes de dibujar personas)
+        for casa in self.casas:
+            color_casa = (130, 130, 130)
+            if casa.dueño:
+                color_casa = self.COLORES_PERSONALIDAD.get(casa.dueño.personalidad, (130, 130, 130))
+            
+            # Estructura cuadrada
+            pygame.draw.rect(self.pantalla, color_casa, (int(casa.x) - 15, int(casa.y) - 10, 30, 22), 2)
+            # Tejado triangular
+            pygame.draw.polygon(self.pantalla, color_casa, [
+                (int(casa.x) - 18, int(casa.y) - 10),
+                (int(casa.x), int(casa.y) - 24),
+                (int(casa.x) + 18, int(casa.y) - 10)
+            ], 2)
+
         # Dibujar personas
         for persona in self.personas:
             color = self.COLORES_PERSONALIDAD.get(persona.personalidad, (255, 255, 255))
@@ -416,9 +547,11 @@ class Simulador:
                     objetivo_texto = "Objetivo: Agua"
                 elif isinstance(persona.objetivo, Persona):
                     objetivo_texto = f"Objetivo: {persona.objetivo.nombre}"
+                # 🏠 Mostrar en interfaz
+                elif hasattr(persona.objetivo, '__class__') and persona.objetivo.__class__.__name__ == 'Casa':
+                    objetivo_texto = "Objetivo: Ir a Casa"
                 else:
                     objetivo_texto = "Objetivo: Desconocido"
-                
                 superficie_obj = fuente_pequena.render(objetivo_texto, True, (200, 200, 200))
                 self.pantalla.blit(superficie_obj, (320, y_offset))
             

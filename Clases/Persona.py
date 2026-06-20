@@ -69,13 +69,22 @@ class Persona:
                             self.nombres_femeninos.append(nombre.strip())
         except FileNotFoundError:
             print("Error al cargar archivo de nombres.")
+        
+        self.agua_inventario = 0
+        self.cultivos = []
+        self.casa = None
     
     def actualizar_necesidades(self):
         """Incrementa las necesidades gradualmente"""
-        self.hambre = min(100, self.hambre + random.uniform(0.001, 0.005))
-        self.sed = min(100, self.sed + random.uniform(0.001, 0.005))
+        
+        # Evalúa si la persona está físicamente sobre o muy cerca de su casa
+        en_casa = self.casa is not None and self.distancia_a(self.casa.x, self.casa.y) < 15
+        factor_desgaste = 0.5 if en_casa else 1.0  # Reduce a la mitad las pérdidas
+        
+        self.hambre = min(100, self.hambre + random.uniform(0.001, 0.005) * factor_desgaste)
+        self.sed = min(100, self.sed + random.uniform(0.001, 0.005) * factor_desgaste)
         self.soledad = min(100, self.soledad + random.uniform(0.01, 0.05))
-        self.energia = max(0, self.energia - random.uniform(0.001, 0.005))
+        self.energia = max(0, self.energia - random.uniform(0.001, 0.005) * factor_desgaste)
         self.edad += 0.007  
 
         if not self.puede_reproducirse and self.edad >= 18:
@@ -128,11 +137,35 @@ class Persona:
         if self.objetivo and not self.objetivo_valido():
             self.objetivo = None
 
+        # 🏠 NUEVA LÓGICA: Construir casa si está estable y tiene recursos
+        if not self.casa and self.comida_almacenada > 0 and self.hambre < 50 and self.sed < 50:
+            if random.random() < 0.02:  # Probabilidad de decidir construir
+                return 'crear_casa'
+        
+        # --- NUEVA LÓGICA DE AGRICULTURA ---
+        # 1. Regar el cultivo si tiene agua encima
+        if self.agua_inventario > 0 and self.cultivos:
+            cultivos_secos = [c for c in self.cultivos if c.agua_almacenada < 3]
+            if cultivos_secos:
+                return 'regar_cultivo'
+                
+        # 2. Buscar agua para el cultivo si está seco (y no se está muriendo de sed/hambre)
+        if self.cultivos and self.sed < 70 and self.hambre < 70:
+            cultivos_secos = [c for c in self.cultivos if c.agua_almacenada == 0]
+            if cultivos_secos and self.agua_inventario == 0:
+                return 'buscar_agua_cultivo'
+
+        # 3. Crear un cultivo si tiene comida almacenada y no tiene demasiados ya
+        if self.comida_almacenada > 0 and len(self.cultivos) < 2 and self.hambre < 50:
+            if random.random() < 0.02: # Probabilidad de decidir plantar
+                return 'crear_cultivo'
+
         if self.comida_almacenada > 0 and self.hambre > 50:
             return 'comer_almacenado'
         
         if self.puede_reproducirse and not self.pareja and self.edad >= 18 and random.random() < 0.05:
             return 'buscar_pareja'
+        
         
         if self.hambre > 85:
             if self.comida_almacenada == 0:
@@ -141,6 +174,11 @@ class Persona:
                 return 'comer_almacenado'
         elif self.sed > 85:
             return 'buscar_agua'
+
+        # 🏠 NUEVA LÓGICA: Si está cansado y tiene casa lejos, vuelve a ella
+        if self.energia < 60 and self.casa and self.distancia_a(self.casa.x, self.casa.y) > 15:
+            return 'ir_a_casa'
+
         elif self.soledad > 75:
             if self.personalidad == 'tímido' and random.random() < 0.5:
                 self.objetivo = None  
@@ -149,11 +187,13 @@ class Persona:
         else:
             self.objetivo = None  
             return 'descansar'
+        
+    
     
     def debe_buscar_objetivo(self) -> bool:
         """Verifica si la persona debe estar buscando un objetivo"""
         accion = self.decidir_accion()
-        return accion in ['buscar_comida', 'buscar_agua', 'socializar']
+        return accion in ['buscar_comida', 'buscar_agua', 'socializar', 'buscar_agua_cultivo', 'regar_cultivo', 'ir_a_casa']
     
     def comer(self, cantidad: float = 30):
         """Reduce hambre al comer o almacenar comida"""
@@ -182,8 +222,12 @@ class Persona:
         self.objetivo = None
     
     def descansar(self):
-        """Recupera energía"""
-        self.energia = min(100, self.energia + 5)
+        """Recupera energía (Mejorada notablemente si está en casa)"""
+        en_casa = self.casa is not None and self.distancia_a(self.casa.x, self.casa.y) < 15
+        recuperacion = 12 if en_casa else 5  # Recupera más de el doble de rápido
+        limite_energia = 110 if en_casa else 100
+        
+        self.energia = min(limite_energia, self.energia + recuperacion)
         self.hambre = min(100, self.hambre + 0.1)
         self.sed = min(100, self.sed + 0.1)
     

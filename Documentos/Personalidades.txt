@@ -1,0 +1,12 @@
+"feliz" -> más agradable para el resto de personas, hace que socialice más facilmente
+"enfadado" -> menos agradable para socializar, probabilidad de pegar a otra persona
+"tímido" -> menos agradable para socializar, probabilidad de no socializar
+"sociable" -> neutro
+
+
+PERSONALIDAD      | Come | Bebe | Socializa | Es Educado
+───────────────────────────────────────────────────────────
+Feliz             | 70%  | 60%  | 90%       | 100%
+Enfadado          | 50%  | 40%  | 20%       | 20%
+Tímido            | 80%  | 90%  | 30%       | 100%
+Sociable          | 60%  | 50%  | 95%       | 90%
